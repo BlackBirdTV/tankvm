@@ -16,6 +16,8 @@ enum Var {
     Bool(bool),
     Ptr(usize),
     Byte(u8),
+    Isize(isize),
+    Usize(usize),
 }
 
 impl Var {
@@ -36,9 +38,23 @@ impl Var {
         }
     }
 
-    fn as_number(&self) -> f64 {
+    fn as_num(&self) -> f64 {
         match self {
             Var::Num(i) => *i,
+            _ => panic!()
+        }
+    }
+
+    fn as_usize(&self) -> usize {
+        match self {
+            Var::Usize(i) => *i,
+            _ => panic!()
+        }
+    }
+
+    fn as_isize(&self) -> isize {
+        match self {
+            Var::Isize(i) => *i,
             _ => panic!()
         }
     }
@@ -46,6 +62,7 @@ impl Var {
     fn as_pointer(&self) -> usize {
         match self {
             Var::Ptr(i) => *i,
+            Var::Usize(i) => *i,
             _ => panic!()
         }
     }
@@ -99,6 +116,14 @@ fn main() {
          *  +-------------------+-------------------+-----------------------------------------------------+
          *  | 10                | {num}{num}{num}   | Jump if less                                        |
          *  +-------------------+-------------------+-----------------------------------------------------+
+         *  | 11                | {ptr}{uint}       | Add uint to ptr                                     |
+         *  +-------------------+-------------------+-----------------------------------------------------+
+         *  | 12                | {ptr}{uint}       | Remove uint from ptr                                |
+         *  +-------------------+-------------------+-----------------------------------------------------+
+         *  | 13                | {ptr}{uint}       | Multiply ptr by uint                                |
+         *  +-------------------+-------------------+-----------------------------------------------------+
+         *  | 14                | {ptr}{uint}       | Divide ptr by uint                                  |
+         *  +-------------------+-------------------+-----------------------------------------------------+
          *  | 253               | {ptr}             | Read keycode from stdin and store it at the next 5  |
          *  |                   |                   | bytes like this: {len}{1}{2}{3}{4}                  |
          *  +-------------------+-------------------+-----------------------------------------------------+
@@ -117,63 +142,57 @@ fn main() {
             }
             2 => {
                 let i = inst.args[0].as_pointer();
-                vars[i] = Var::Num(vars[i].get(&vars).as_number() + inst.args[1].get(&vars).as_number());
+                vars[i] = Var::Num(vars[i].get(&vars).as_num() + inst.args[1].get(&vars).as_num());
             }
             3 => {
                 let i = inst.args[0].as_pointer();
-                vars[i] = Var::Num(vars[i].get(&vars).as_number() - inst.args[1].get(&vars).as_number());
+                vars[i] = Var::Num(vars[i].get(&vars).as_num() - inst.args[1].get(&vars).as_num());
             }
             4 => {
                 let i = inst.args[0].as_pointer();
-                vars[i] = Var::Num(vars[i].get(&vars).as_number() * inst.args[1].get(&vars).as_number());
+                vars[i] = Var::Num(vars[i].get(&vars).as_num() * inst.args[1].get(&vars).as_num());
             }
             5 => {
                 let i = inst.args[0].as_pointer();
-                vars[i] = Var::Num(vars[i].get(&vars).as_number() / inst.args[1].get(&vars).as_number());
+                vars[i] = Var::Num(vars[i].get(&vars).as_num() / inst.args[1].get(&vars).as_num());
             },
             6 => {
-                i = inst.args[0].as_number() as usize
+                i = inst.args[0].as_usize()
             },
             7 => {
                 let a = inst.args[0].get(&vars);
                 let b = inst.args[1].get(&vars);
                 if a == b {
-                    i = inst.args[2].as_number() as usize;
+                    i = inst.args[2].as_usize();
                 }
             },
             8 => {
                 let a = inst.args[0].get(&vars);
                 let b = inst.args[1].get(&vars);
                 if a != b {
-                    i = inst.args[2].as_number() as usize;
+                    i = inst.args[2].as_usize();
                 }
             },
             9 => {
-                let a = inst.args[0].get(&vars).as_number();
-                let b = inst.args[1].get(&vars).as_number();
+                let a = inst.args[0].get(&vars).as_num();
+                let b = inst.args[1].get(&vars).as_num();
                 if a > b {
-                    i = inst.args[2].as_number() as usize;
+                    i = inst.args[2].as_usize();
                 }
             },
             10 => {
-                let a = inst.args[0].get(&vars).as_number();
-                let b = inst.args[1].get(&vars).as_number();
+                let a = inst.args[0].get(&vars).as_num();
+                let b = inst.args[1].get(&vars).as_num();
                 if a < b {
-                    i = inst.args[2].as_number() as usize;
+                    i = inst.args[2].as_usize();
                 }
             },
             253 => {
                 let byte_ptr = inst.args[0].as_pointer();
-                'read_loop: loop {
-                    stdin.read_exact(&mut buf).unwrap();
-                    for keycode in decoder.write(buf[0]) {
-                        let bytes = keycode.bytes();
-                        vars[byte_ptr] = Var::Num(bytes.len() as f64);
-                        for (i, b) in bytes.iter().enumerate() {
-                            vars[byte_ptr + 1 + i] = Var::Byte(*b);
-                        }
-                        break 'read_loop;
-                    }
+                let mut buf: [u8; 4] = [0; 4];
+                vars[byte_ptr] = Var::Isize(unsafe { libc::read(0, buf.as_mut_ptr() as *mut libc::c_void, 4 as libc::size_t) });
+                for (i, b) in buf.iter().enumerate() {
+                    vars[byte_ptr + 1 + i] = Var::Byte(*b);
                 }
             }
             254 => {
@@ -208,7 +227,9 @@ fn to_insts(inp: File) -> Vec<Inst> {
                 2 => Var::Num(f64::from_be_bytes([var_buf[0], var_buf[1], var_buf[2], var_buf[3], var_buf[4], var_buf[5], var_buf[6], var_buf[7]])),
                 3 => Var::Bool(var_buf[0] == 1),
                 4 => Var::Ptr(usize::from_be_bytes([var_buf[0], var_buf[1], var_buf[2], var_buf[3], var_buf[4], var_buf[5], var_buf[6], var_buf[7]])),
-                _ => Var::Byte(var_buf[0]),
+                5 => Var::Byte(var_buf[0]),
+                6 => Var::Isize(isize::from_be_bytes([var_buf[0], var_buf[1], var_buf[2], var_buf[3], var_buf[4], var_buf[5], var_buf[6], var_buf[7]])),
+                _ => Var::Usize(usize::from_be_bytes([var_buf[0], var_buf[1], var_buf[2], var_buf[3], var_buf[4], var_buf[5], var_buf[6], var_buf[7]]))
             });
             var_type = None;
             var_buf = Vec::new();
